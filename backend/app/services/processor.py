@@ -6,7 +6,6 @@ from app.supabase_client import supabase
 from app.models import VideoStatus
 from app.services.video_downloader import download_instagram_video, cleanup_video_file
 from app.services.ai_extractor import extract_locations_from_video
-from app.services.maps_service import find_place_basic
 
 logger = logging.getLogger(__name__)
 
