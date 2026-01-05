@@ -20,7 +20,6 @@ from app.schemas import (
     LocationUpdate
 )
 from app.services.processor import process_video_source
-from app.services.maps_service import get_place_details
 from app.config import settings
 
 # Configure logging
@@ -151,44 +150,6 @@ async def process_video(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/location/{location_id}/pin", response_model=LocationResponse)
-async def pin_location(location_id: str):
-    """
-    Lazy Pinning Endpoint: User wants to see this spot on map.
-    Only NOW do we pay for Google Maps to get coords.
-    """
-    # Get location
-    response = supabase.table("locations").select("*").eq("id", location_id).execute()
-    location = response.data[0] if response.data else None
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-        
-    # 1. Check if already has lat/lng
-    if location.get('lat') and location.get('lng'):
-        return LocationResponse.model_validate(location)
-
-    # 2. Call Google Maps (Zero-Cost until now)
-    from app.services.maps_service import get_coordinates
-    
-    coords = await get_coordinates(location['raw_name'], location.get('context_location'))
-    
-    if not coords:
-        raise HTTPException(status_code=404, detail="Could not find coordinates for this place")
-        
-    # 3. Update DB
-    update_data = {
-        "lat": coords['lat'],
-        "lng": coords['lng'],
-        "google_place_id": coords['place_id']
-    }
-    
-    update_response = supabase.table("locations").update(update_data).eq("id", location_id).execute()
-    updated_location = update_response.data[0]
-    
-    return LocationResponse.model_validate(updated_location)
-
-
 @app.get("/trips/{video_id}", response_model=TripResponse)
 async def get_trip(video_id: str):
     """
@@ -209,59 +170,6 @@ async def get_trip(video_id: str):
         video_source=VideoSourceResponse.model_validate(video_source),
         locations=[LocationResponse.model_validate(loc) for loc in locations]
     )
-
-
-@app.get("/location/{location_id}/enrich", response_model=EnrichLocationResponse)
-async def enrich_location(location_id: str):
-    """
-    Lazy Loading Endpoint: Fetches expensive Google Maps details only when user clicks.
-    """
-    # Get location
-    response = supabase.table("locations").select("*").eq("id", location_id).execute()
-    location = response.data[0] if response.data else None
-    
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found")
-    
-    # Check if already fetched
-    if location.get('details_fetched'):
-        return EnrichLocationResponse.model_validate(location)
-    
-    # Check if we have a place_id
-    if not location.get('google_place_id'):
-        raise HTTPException(
-            status_code=400,
-            detail="Location does not have a Google Place ID"
-        )
-    
-    # Fetch expensive details from Google Places API
-    details = await get_place_details(location['google_place_id'])
-    
-    if not details:
-        raise HTTPException(
-            status_code=404,
-            detail="Could not fetch place details from Google Maps"
-        )
-    
-    # Update location with details
-    update_data = {
-        "lat": details.get("lat"),
-        "lng": details.get("lng"),
-        "rating": details.get("rating"),
-        "photo_ref": details.get("photo_ref"),
-        "address": details.get("address"),
-        "price_level": details.get("price_level"),
-        "details_fetched": True
-    }
-    
-    # Store opening_hours as JSON string
-    if details.get("opening_hours"):
-        update_data["opening_hours"] = json.dumps(details.get("opening_hours"))
-    
-    update_response = supabase.table("locations").update(update_data).eq("id", location_id).execute()
-    updated_location = update_response.data[0]
-    
-    return EnrichLocationResponse.model_validate(updated_location)
 
 
 @app.patch("/location/{location_id}", response_model=LocationResponse)
